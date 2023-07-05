@@ -1,3 +1,96 @@
 #####    EAU project code    ####
 # Part1: integrate 10X data
+getwd()
+if (T) {
+  data_dir <- "./ori_data/EAU"    
+  list.dirs(data_dir, full.names = F)[-1]
+  samples <- list.dirs(data_dir, full.names = F)[-1]
+  list.files(paste0(data_dir, samples[1]))  
+  
+  merged.list <- list()
+  for (sample in samples) {
+    expr <- Read10X(data.dir = paste(data_dir, sample,sep = "/"))
+    seurat_obj <- CreateSeuratObject(
+      counts = expr,
+      project = sample,
+      min.cells = 3,
+      min.features = 200
+    )
+    print(paste0(
+      sample,
+      ": ",
+      dim(seurat_obj)[1],
+      " genes, ",
+      dim(seurat_obj)[2],
+      " cells"
+    ))
+    seurat_obj <- RenameCells(seurat_obj,
+                              add.cell.id = sample) 
+    seurat_obj[["percent.mt"]] <-
+      PercentageFeatureSet(seurat_obj, pattern = "^mt-")
+    seurat_obj <- subset(seurat_obj, 
+                         subset= nFeature_RNA>200 & nFeature_RNA<2500 & 
+                           percent.mt<25)
+    merged.list[[sample]] <- seurat_obj
+  }
+}
+#normalization
+merged.list <- lapply(
+  X = merged.list,
+  FUN = function(x) {
+    x <- NormalizeData(x)
+    x <-
+      FindVariableFeatures(x, selection.method = "vst", nfeatures = 2000,assay=NULL)
+  }
+)
 
+
+features <- SelectIntegrationFeatures(object.list = merged.list)
+anchors <-
+  FindIntegrationAnchors(object.list = merged.list, anchor.features = features)
+
+merged <- IntegrateData(anchorset = anchors) 
+DefaultAssay(merged) <- "integrated"    
+dim(merged)  
+
+merged <- ScaleData(merged, verbose = FALSE)
+merged <- RunPCA(merged, npcs = 30, verbose = FALSE)
+DimPlot(merged, reduction = "pca")
+ElbowPlot(merged,ndims = 50)
+dims <- "20"
+merged <- RunUMAP(merged, reduction = "pca", dims = 1:dims)  
+merged <- FindNeighbors(merged, reduction = "pca", dims = 1:dims)
+merged <- FindClusters(merged, resolution = 0.5)
+p1 <- DimPlot(merged, reduction = "umap", group.by = "orig.ident")
+p2 <-
+  DimPlot(merged,
+          reduction = "umap",
+          label = TRUE,
+          repel = TRUE)
+p1 + p2
+
+#annotation
+merged <-
+  RenameIdents(
+    merged,
+    `0` = "Rods",
+    `1` = "RGCs",
+    `2` = "Rods",
+    `3` = "Rods",
+    `4` = "Microglia cells",
+    `5` = "Monocyte cells",
+    `6` = "Muller cells",
+    `7` = "Cones cells",
+    `8` = "Plasma cells",
+    `9` = "Astrocytes",
+    `10` = "Oligodendrocyte cells",
+    `11` = "ONC cells",
+    `12` = "Amacrine cells",
+    `13` = "Epithelial cells",
+    `14` = "Perivascular cells",
+    `15` = "Bipolar cells",
+    `16` = "Oligodendrocyte cells",
+    `17` = "T cell"
+  )
+DimPlot(merged, label = TRUE, repel = T) + NoLegend()
+saveRDS(merged, file= "./results/merged.rds")
